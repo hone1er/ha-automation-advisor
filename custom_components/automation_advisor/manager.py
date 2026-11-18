@@ -490,7 +490,8 @@ class AdvisorManager:
         config = {k: v for k, v in config.items() if k != "id"}
         config.setdefault("alias", sg["title"])
         config.setdefault("mode", "single")
-        result, error = await verify(self.hass, config, known, ctx)
+        result, error = await verify(self.hass, config, known, ctx,
+                                     await self.source.async_catalog())
         if error:
             raise autos.AdvisorError(error)
         if keep_id:
@@ -634,7 +635,7 @@ class AdvisorManager:
         """'This automation does not work: <problem>' -> a verified fix suggestion (pending), which
         the person applies like any other. Uses the automation's traces, its replay and the recent
         activity of its devices as evidence."""
-        from .llm import _body, async_fix_automation, verify
+        from .llm import _body, async_build, async_buttons_fix, async_fix_automation, device_of, verify
 
         ai_entity = self.options.get(CONF_AI_TASK_ENTITY)
         if not ai_entity:
@@ -648,15 +649,40 @@ class AdvisorManager:
         auto = next((a for a in ctx.automations if a.entity_id == automation_entity_id), None)
         if auto is None:
             raise autos.AdvisorError(f"{automation_entity_id} does not exist (any more).")
+        catalog = await self.source.async_catalog()
         names = {e: i.name for e, i in ctx.entities.items()}
+        names.update({e: i["name"] for e, i in catalog["entities"].items() if e not in names})
+        names.update({d["id"]: d["name"] for d in catalog["devices"]})
+        names.update({a["id"]: a["name"] for a in catalog["areas"]})
         traces = await self.source.async_traces(auto)
+        device_id = device_of(auto.config)
+        device = next((d for d in catalog["devices"] if d["id"] == device_id), None)
+        device_triggers = await self.source.async_device_triggers(device_id) if device else []
         self.running = True
         self.live = {"started": now, "step": None, "step_started": now, "done": [],
                      "thinking": "", "answer": ""}
         self._notify_listeners()
         try:
-            item = await async_fix_automation(self.hass, ai_entity, auto, problem.strip(), ctx,
-                                              traces, names, self._progress)
+            if device and device_triggers:
+                # A remote / button automation: re-map the buttons through the reliable button
+                # path (numbered events -> the advisor writes the automation), told how it is set
+                # up now and what is wrong.
+                request = (f"This {device['name']} is currently set up like this: "
+                           f"{describe(auto.config, names)} The person now says: \"{problem.strip()}\". "
+                           "Map the buttons again: keep everything that works and change what they ask.")
+                answer = await async_build(self.hass, ai_entity, request, catalog, device,
+                                           device_triggers, self._progress)
+                item = answer["items"][0]
+                if item.get("_error"):
+                    repaired = await async_buttons_fix(self.hass, ai_entity, answer["_prompt"],
+                                                       item["_error"], device_triggers, self._progress)
+                    item = repaired["items"][0]
+                if item.get("_error") or not item.get("automation"):
+                    raise autos.AdvisorError(f"The AI's button mapping did not work: {item.get('_error')}")
+                item["why"] = (f"Re-mapped the buttons as you asked. {answer.get('notes') or ''}").strip()
+            else:
+                item = await async_fix_automation(self.hass, ai_entity, auto, problem.strip(), ctx,
+                                                  traces, names, self._progress)
             self._progress(step="Checking the fix: validator and replay on your history")
             config = {k: v for k, v in item["automation"].items() if k != "id"}
             config.setdefault("alias", auto.alias)
@@ -668,7 +694,8 @@ class AdvisorManager:
                     "Try describing when it happens and what you expected, e.g. \"around 7 pm, "
                     "while I'm at the stove, the light goes off after 5 minutes\"."
                 )
-            result, error = await verify(self.hass, config, self.source.entity_ids() | {"sun.sun"}, ctx)
+            result, error = await verify(self.hass, config, self.source.entity_ids() | {"sun.sun"},
+                                         ctx, catalog)
             if error:
                 raise autos.AdvisorError(f"The AI's fix did not pass the checks: {error}")
         finally:

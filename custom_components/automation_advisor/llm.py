@@ -610,11 +610,18 @@ async def async_refine_one(hass: HomeAssistant, ai_entity: str, sg: dict, instru
     return item
 
 
-async def verify(hass: HomeAssistant, config: dict, known: set[str],
-                 ctx: A.Context) -> tuple[BacktestResult | None, str | None]:
-    """Check an automation the person edited: real devices, safety, Home Assistant's validator,
-    then replay it. Returns (replay result, error message)."""
-    if (err := _check_config(config, known)) is not None:
+async def verify(hass: HomeAssistant, config: dict, known: set[str], ctx: A.Context,
+                 catalog: dict | None = None) -> tuple[BacktestResult | None, str | None]:
+    """Check an automation the person edited or the AI fixed: real entities (and devices and
+    areas, with a catalog), safety, Home Assistant's validator, then replay it.
+    Returns (replay result, error message)."""
+    if catalog is not None:
+        if "sun.sun" in known and "sun.sun" not in catalog["entities"]:
+            catalog = {**catalog, "entities": {**catalog["entities"], "sun.sun": {"name": "Sun"}}}
+        err = check_build(config, catalog)
+    else:
+        err = _check_config(config, known)
+    if err is not None:
         return None, f"Not possible: {err}."
     try:
         await autos.validate(hass, config)
@@ -1041,3 +1048,12 @@ async def async_buttons_fix(hass: HomeAssistant, ai_entity: str, prompt: str, er
     return {"items": [{"title": answer.get("title"), "does": answer.get("does"),
                        "why": "Set up as you asked.", "automation": config, "_error": err}],
             "notes": answer.get("notes") or ""}
+
+
+def device_of(config: dict | None) -> str | None:
+    """The one device whose events trigger this automation (a remote / button), if any."""
+    trigs = (config or {}).get("triggers") or (config or {}).get("trigger") or []
+    devs = {t.get("device_id") for t in (trigs if isinstance(trigs, list) else [trigs])
+            if isinstance(t, dict) and (t.get("trigger") or t.get("platform")) == "device"}
+    devs.discard(None)
+    return devs.pop() if len(devs) == 1 else None

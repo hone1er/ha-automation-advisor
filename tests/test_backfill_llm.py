@@ -747,3 +747,73 @@ def test_repeated_button_words_get_readable_ids():
         {"event": 2, "button": "left", "do": "hold_brighter", "target": t},
         {"event": 3, "button": "left", "do": "stop"}]}, trig)
     assert err is None and [x["id"] for x in cfg["triggers"]] == ["left", "left_hold", "left_release"]
+
+
+async def test_fix_of_a_button_automation_remaps_the_buttons(hass: HomeAssistant, config_dir) -> None:
+    """A remote automation (device triggers, area targets) asked to be faster with hold-to-dim:
+    the fix goes through the button mapping and passes the device/area-aware checks
+    (it used to fail with "refers to no devices")."""
+    from homeassistant.helpers import area_registry as ar, device_registry as dr
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+    from zoneinfo import ZoneInfo
+
+    entry = await _setup(hass, ai_task_entity="ai_task.fake", show_statistical=False)
+    manager = entry.runtime_data
+    kitchen = ar.async_get(hass).async_create("Kitchen")
+    zha = MockConfigEntry(domain="zha")
+    zha.add_to_hass(hass)
+    remote = dr.async_get(hass).async_get_or_create(
+        config_entry_id=zha.entry_id, identifiers={("zha", "r2")}, name="Kitchen dimmer", model="STYRBAR")
+    dev_trig = [{"platform": "device", "domain": "zha", "device_id": remote.id,
+                 "type": t, "subtype": s}
+                for t, s in (("remote_button_short_press", "dim_up"), ("remote_button_short_press", "dim_down"),
+                             ("remote_button_long_press", "dim_up"), ("remote_button_long_press", "dim_down"),
+                             ("remote_button_long_release", "dim_up"), ("remote_button_long_release", "dim_down"))]
+    old = {"alias": "Kitchen light dimming and brightening", "mode": "single",
+           "triggers": [{**dev_trig[0], "trigger": "device", "id": "up"},
+                        {**dev_trig[1], "trigger": "device", "id": "down"}],
+           "actions": [{"choose": [
+               {"conditions": [{"condition": "trigger", "id": "up"}],
+                "sequence": [{"action": "light.turn_on", "target": {"area_id": kitchen.id},
+                              "data": {"brightness_step_pct": 10, "transition": 1}}]},
+               {"conditions": [{"condition": "trigger", "id": "down"}],
+                "sequence": [{"action": "light.turn_on", "target": {"area_id": kitchen.id},
+                              "data": {"brightness_step_pct": -10, "transition": 1}}]}]}]}
+    auto = A.ExistingAutomation("automation.kitchen_dimming", old["alias"], config_id="k1",
+                                editable=True, config=old)
+    calls = []
+
+    async def fake_generate(hass_, *, task_name, entity_id, instructions, **kw):
+        calls.append(instructions)
+        return _answer_one({
+            "title": "Kitchen dimmer: instant steps, hold to dim",
+            "does": "Up/down step the kitchen lights at once; hold to keep changing, release to stop.",
+            "buttons": [
+                {"event": 1, "button": "up", "do": "brighter", "target": {"area_id": kitchen.id}, "step_pct": 10},
+                {"event": 2, "button": "down", "do": "dimmer", "target": {"area_id": kitchen.id}, "step_pct": 10},
+                {"event": 3, "button": "up", "do": "hold_brighter", "target": {"area_id": kitchen.id}},
+                {"event": 4, "button": "down", "do": "hold_dimmer", "target": {"area_id": kitchen.id}},
+                {"event": 5, "button": "up", "do": "stop"},
+                {"event": 6, "button": "down", "do": "stop"}]})
+
+    with patch("custom_components.automation_advisor.manager.AdvisorManager._context",
+               autospec=True) as ctx_patch, \
+            patch.object(manager.source, "async_device_triggers", AsyncMock(return_value=dev_trig)), \
+            patch("custom_components.automation_advisor.automations.validate", AsyncMock()), \
+            patch("custom_components.automation_advisor.llm._generate", side_effect=fake_generate):
+        ctx_patch.return_value = A.Context(events=[], entities={}, automations=[auto], tz=ZoneInfo("UTC"))
+        rec = await manager.async_fix("automation.kitchen_dimming",
+                                      "It lags when I press quickly; make it instant and let me hold up/down to dim")
+    assert len(calls) == 1
+    p = calls[0]
+    assert "THE DEVICE: Kitchen dimmer" in p and "make it instant" in p
+    assert "currently set up like this" in p and "Kitchen" in p
+    sg = rec["suggestion"]
+    assert sg["kind"] == "review" and sg["target_automation"] == "automation.kitchen_dimming"
+    cfg = sg["automation"]
+    assert cfg["id"] == "k1" and cfg["mode"] == "restart"
+    assert cfg["alias"] == "Kitchen light dimming and brightening"
+    opts = cfg["actions"][0]["choose"]
+    assert opts[0]["sequence"][0]["data"] == {"brightness_step_pct": 10, "transition": 0}
+    assert any("repeat" in o["sequence"][0] for o in opts)
+    assert any(o["sequence"] == [{"stop": "Button released"}] for o in opts)

@@ -160,7 +160,11 @@ class LocalSource(Source):
         areas = [{"id": a.id, "name": a.name} for a in area_reg.async_list_areas()]
         area_name = {a["id"]: a["name"] for a in areas}
         devices = []
-        for d in dev_reg.devices.values():
+        # Newer Home Assistant: iterating `devices` yields the entries (and `.values()` is
+        # deprecated); older: it is a mapping of id -> entry.
+        all_devices = dev_reg.devices
+        for d in (all_devices if hasattr(all_devices, "_report_deprecated_use")
+                  else all_devices.values()):
             if d.disabled_by or d.entry_type is not None:  # skip services/helpers
                 continue
             devices.append({
