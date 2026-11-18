@@ -1,0 +1,10 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+dev_config/
+advisor_config/
+mac_advisor/
+.venv-2025.9/
+dist/
+.DS_Store

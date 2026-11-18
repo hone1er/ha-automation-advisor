@@ -1,0 +1,101 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Automation Advisor",
+        "description": "Automation Advisor watches when lights, switches, fans and covers are switched by hand, compares that with motion, door and presence sensors, and has an AI suggest automations. It also flags automations you keep undoing. Nothing is created until you accept it in the Automation Advisor panel. Where are the devices you want it to learn from?",
+        "menu_options": {
+          "local": "This Home Assistant",
+          "remote": "Another Home Assistant on my network (read-only)"
+        }
+      },
+      "local": {
+        "title": "Automation Advisor",
+        "description": "Optionally pick an AI Task entity so an AI model (any provider set up in Home Assistant) words the suggestions and proposes extra ideas. Leave empty to run fully local; you can change it later.",
+        "data": {
+          "ai_task_entity": "AI Task entity (optional)"
+        }
+      },
+      "remote": {
+        "title": "Connect to your Home Assistant",
+        "description": "The advisor reads your other Home Assistant's activity log, devices and automations. Nothing is changed there: accepting a suggestion gives you the YAML to paste (you can allow direct changes later in Options).\n\nCreate a token on that Home Assistant: your profile (bottom left) → Security → Long-lived access tokens → Create token. Use an administrator account so areas and automation configs can be read. {error}",
+        "data": {
+          "url": "Address",
+          "token": "Long-lived access token",
+          "verify_ssl": "Verify SSL certificate",
+          "ai_task_entity": "AI Task entity on THIS Home Assistant (optional)"
+        },
+        "data_description": {
+          "url": "For example http://homeassistant.local:8123 or http://192.168.1.20:8123",
+          "verify_ssl": "Turn off only for a self-signed https certificate."
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Automation Advisor is already set up."
+    },
+    "error": {
+      "cannot_connect": "Could not connect.",
+      "invalid_auth": "The token was rejected."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Automation Advisor settings",
+        "data": {
+          "interval_hours": "Analyse every",
+          "lookback_days": "Look back over",
+          "min_occurrences": "Minimum times a pattern must happen",
+          "min_confidence": "Minimum confidence",
+          "override_window_s": "Undo window",
+          "dismissed_retention_days": "Keep dismissed suggestions for",
+          "ai_task_entity": "AI Task entity (needed for suggestions)",
+          "excluded_entities": "Ignore these entities",
+          "notify": "Notify me about new suggestions",
+          "allow_remote_write": "Allow changes on the connected Home Assistant",
+          "test_ignore_existing": "Test mode: ignore my existing automations"
+        },
+        "data_description": {
+          "interval_hours": "How often the advisor analyses on its own. 0 = only when you press Analyse now (use this if your AI, e.g. Ollama on a laptop, is not always on). Daily is plenty otherwise.",
+          "lookback_days": "How many days of activity each analysis looks at. Longer finds weekly habits but reacts more slowly to change.",
+          "min_occurrences": "A habit must have happened at least this often (on at least 3 different days) before it is suggested.",
+          "min_confidence": "Share of your manual actions the pattern must explain (0.6 = 60 %).",
+          "override_window_s": "If you reverse what an automation did within this time, it counts as 'you undid it'.",
+          "dismissed_retention_days": "Dismissed suggestions stay restorable this long, and are not suggested again meanwhile.",
+          "ai_task_entity": "The AI designs every suggestion. It gets a digest of your home (devices with rooms, your automations, typical days as timelines) plus the statistics engine's findings, and every idea it proposes is checked against your real devices, Home Assistant's validator and a replay on your history before you see it. Ollama runs locally; cloud providers send the digest to them.",
+          "excluded_entities": "These are never logged or suggested.",
+          "allow_remote_write": "Off = read-only: accepting gives you YAML to paste. On = accept/modify/delete/turn off act directly on the connected Home Assistant. Make a backup there first.",
+          "test_ignore_existing": "Suggests as if you had no automations: what they do counts as done by hand. Useful to see what the advisor would come up with. Checks of your existing automations still run."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "pending": {
+        "name": "Pending suggestions"
+      }
+    }
+  },
+  "services": {
+    "run_analysis": {
+      "name": "Run analysis now",
+      "description": "Analyse the activity log right away instead of waiting for the schedule."
+    },
+    "decide": {
+      "name": "Decide on a suggestion",
+      "description": "Accept, modify, delete, disable, dismiss or restore a suggestion.",
+      "fields": {
+        "suggestion_id": {
+          "name": "Suggestion ID",
+          "description": "The id shown in the panel or in the sensor's attributes."
+        },
+        "action": {
+          "name": "Action",
+          "description": "What to do with it."
+        }
+      }
+    }
+  }
+}
