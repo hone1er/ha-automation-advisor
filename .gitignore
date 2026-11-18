@@ -1,10 +1,42 @@
-.venv/
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+.venv-*/
+venv/
+*.egg-info/
+
+# Build output
+dist/
+*.zip
+
+# Local Home Assistant instances used for development (contain accounts, tokens, history)
 dev_config/
 advisor_config/
 mac_advisor/
-.venv-2025.9/
-dist/
+config/
+
+# Anything that could hold secrets or personal data
+.env
+.env.*
+secrets.yaml
+.storage/
+*.db
+*.db-shm
+*.db-wal
+*.log
+*.log.*
+token.json
+dev_credentials.txt
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
 .DS_Store
+Thumbs.db
