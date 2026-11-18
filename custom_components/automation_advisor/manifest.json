@@ -3,7 +3,8 @@
   "name": "Automation Advisor",
   "after_dependencies": [
     "ai_task",
-    "recorder"
+    "recorder",
+    "trace"
   ],
   "codeowners": [
     "@hone1er"

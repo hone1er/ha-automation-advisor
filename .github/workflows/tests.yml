@@ -20,7 +20,7 @@ jobs:
             python: "3.13"
             phacc: "0.13.281"
             frontend: "20250903.5"
-            extra: "pycares<5"
+            extra: "'pycares<5'"
           - ha: "2026.10.4"
             python: "3.14"
             phacc: "0.13.375"

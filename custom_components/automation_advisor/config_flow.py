@@ -89,7 +89,7 @@ class AdvisorConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_remote(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
-        placeholders = {"error": ""}
+        placeholders = {"error": "", "url_example": "http://homeassistant.local:8123"}
         if user_input is not None:
             url = user_input[CONF_URL].strip().rstrip("/")
             if not url.startswith(("http://", "https://")):
