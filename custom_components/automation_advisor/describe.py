@@ -153,7 +153,18 @@ def condition_text(c: Any, names: dict[str, str]) -> str:
 
 def action_text(a: dict, names: dict[str, str]) -> str:
     if "delay" in a:
-        return f"wait {_dur(a['delay'])}"
+        d = a["delay"]
+        if isinstance(d, dict) and set(d) == {"milliseconds"}:
+            return f"wait {int(d['milliseconds'])} ms"
+        return f"wait {_dur(d)}"
+    if "stop" in a:
+        return "stop"
+    if "repeat" in a:
+        r = a["repeat"] or {}
+        seq = ", then ".join(action_text(x, names) for x in _list(r.get("sequence")) if isinstance(x, dict))
+        if "count" in r:
+            return f"repeat up to {r['count']} times ({seq}) until the button is released"
+        return f"repeat ({seq})"
     if "choose" in a:
         parts = []
         for opt in _list(a["choose"]):

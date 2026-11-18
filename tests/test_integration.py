@@ -369,3 +369,21 @@ async def test_clear_all_suggestions(hass: HomeAssistant, config_dir, hass_ws_cl
     assert manager.data["suggestions"] == {}
     await manager.async_run()  # a clean run proposes them again
     assert sid in manager.data["suggestions"]
+
+
+async def test_button_automation_passes_home_assistants_validator(hass: HomeAssistant, config_dir) -> None:
+    """The structure the advisor writes for buttons (restart, choose, repeat, stop, transition)
+    is accepted by Home Assistant itself (state triggers stand in for the device triggers)."""
+    from custom_components.automation_advisor import automations as autos
+    from custom_components.automation_advisor.llm import buttons_to_automation
+
+    await _setup(hass)
+    trig = [{"trigger": "state", "entity_id": "binary_sensor.kitchen_motion", "to": "on"},
+            {"trigger": "state", "entity_id": "binary_sensor.hall_motion", "to": "on"},
+            {"trigger": "state", "entity_id": "binary_sensor.hall_motion", "to": "off"}]
+    cfg, err = buttons_to_automation({"buttons": [
+        {"event": 1, "button": "up", "do": "on", "target": {"entity_id": ["light.kitchen"]}},
+        {"event": 2, "button": "hold", "do": "hold_dimmer", "target": {"entity_id": ["light.kitchen"]}},
+        {"event": 3, "button": "release", "do": "stop"}]}, trig)
+    assert err is None
+    await autos.validate(hass, {"alias": "Remote", **cfg})

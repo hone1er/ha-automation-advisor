@@ -611,8 +611,9 @@ async def test_ai_sets_up_a_new_remote(hass: HomeAssistant, config_dir, hass_ws_
     opts = cfg["actions"][0]["choose"]
     assert [o["conditions"][0]["id"] for o in opts] == ["up", "down", "left", "right"]
     assert opts[2]["sequence"][0] == {"action": "light.turn_on", "target": {"entity_id": ["light.bedroom_ceiling"]},
-                                      "data": {"brightness_step_pct": 10}}
-    assert opts[3]["sequence"][0]["data"] == {"brightness_step_pct": -10}
+                                      "data": {"brightness_step_pct": 10, "transition": 0}}
+    assert opts[3]["sequence"][0]["data"] == {"brightness_step_pct": -10, "transition": 0}
+    assert cfg["mode"] == "restart"  # a new press takes over at once
     ex = sg["evidence"]["exactly"]
     assert "if it was “left”: make Bedroom ceiling brighter by 10 %" in ex
     assert "if it was “up”: turn on all lights in Bedroom" in ex
@@ -705,3 +706,44 @@ def test_dangerous_actions_are_never_allowed():
     garage = cfg({"action": "cover.open_cover", "target": {"entity_id": "cover.garage_door"}})
     assert "garage" in _unsafe(garage)
     assert "templated" in _unsafe(cfg({"action": "{{ 'lock.unlock' }}"}))
+
+
+def test_hold_to_dim_loops_until_release():
+    from custom_components.automation_advisor.describe import describe
+    from custom_components.automation_advisor.llm import buttons_to_automation
+
+    trig = [{"platform": "device", "domain": "zha", "device_id": "r", "type": t, "subtype": st}
+            for t, st in (("remote_button_short_press", "turn_on"), ("remote_button_long_press", "left"),
+                          ("remote_button_long_release", "left"))]
+    target = {"area_id": "bedroom"}
+    cfg, err = buttons_to_automation({"buttons": [
+        {"event": 1, "button": "up", "do": "on", "target": target},
+        {"event": 2, "button": "left hold", "do": "hold_brighter", "target": target, "step_pct": 10},
+        {"event": 3, "button": "left release", "do": "stop"}]}, trig)
+    assert err is None and cfg["mode"] == "restart"
+    hold = cfg["actions"][0]["choose"][1]["sequence"][0]["repeat"]
+    assert hold["count"] == 20
+    assert hold["sequence"] == [
+        {"action": "light.turn_on", "target": target, "data": {"brightness_step_pct": 10, "transition": 0.25}},
+        {"delay": {"milliseconds": 250}}]
+    assert cfg["actions"][0]["choose"][2]["sequence"] == [{"stop": "Button released"}]
+    text = describe(cfg, {"bedroom": "Bedroom", "r": "Remote"})
+    assert "if it was “left_hold”: repeat up to 20 times (make all lights in Bedroom brighter by 10 %, then wait 250 ms) until the button is released" in text
+    assert "if it was “left_release”: stop" in text
+    # a hold without a release would run on after letting go: refused, so the AI fixes it
+    _, err = buttons_to_automation({"buttons": [
+        {"event": 2, "button": "left hold", "do": "hold_brighter", "target": target}]}, trig)
+    assert "no 'stop' on a release event" in err
+
+
+def test_repeated_button_words_get_readable_ids():
+    from custom_components.automation_advisor.llm import buttons_to_automation
+
+    trig = [{"platform": "device", "domain": "zha", "device_id": "r", "type": t, "subtype": "left"}
+            for t in ("remote_button_short_press", "remote_button_long_press", "remote_button_long_release")]
+    t = {"area_id": "bedroom"}
+    cfg, err = buttons_to_automation({"buttons": [
+        {"event": 1, "button": "left", "do": "brighter", "target": t},
+        {"event": 2, "button": "left", "do": "hold_brighter", "target": t},
+        {"event": 3, "button": "left", "do": "stop"}]}, trig)
+    assert err is None and [x["id"] for x in cfg["triggers"]] == ["left", "left_hold", "left_release"]

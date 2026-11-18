@@ -580,6 +580,9 @@ time_pattern; "conditions" with "condition": state | numeric_state | time | sun 
 "actions" with "action": "<domain>.<service>" and "target": {{"entity_id": ...}}). No templates,
 no device triggers, no "attribute" keys. Durations as {{"minutes": N}}, times "HH:MM:SS", sun
 offsets "-01:00:00". Never unlock locks, open garage doors or disarm alarms.
+- Buttons and remotes must feel instant: "mode": "restart" (a new press takes over at once;
+  "queued" makes quick presses lag), "transition": 0 in the data of brightness steps, and for
+  holding a button a "repeat" loop (count 20: step + 250 ms delay) that the release event ends.
 
 Answer with ONE JSON object and nothing else:
 {{"title": "<what it does, max 60 chars>", "does": "<plain words, device names, times>",
@@ -646,6 +649,9 @@ time_pattern; "conditions" with "condition": state | numeric_state | time | sun 
 no device triggers, no "attribute" keys. Durations as {{"minutes": N}}, times "HH:MM:SS", sun
 offsets "-01:00:00". Never unlock locks, open garage doors or disarm alarms. Change only what is
 needed to fix the complaint.
+- Buttons and remotes must feel instant: "mode": "restart" (a new press takes over at once;
+  "queued" makes quick presses lag), "transition": 0 in the data of brightness steps, and for
+  holding a button a "repeat" loop (count 20: step + 250 ms delay) that the release event ends.
 
 Answer with ONE JSON object and nothing else:
 {{"title": "<what the fixed automation does, max 60 chars>",
@@ -744,14 +750,17 @@ How to write it:
   "sequence": [...]}}, ...]}}].
 - A whole room: "target": {{"area_id": "<area_id>"}}. Single lights: "target": {{"entity_id": ...}}.
 - Dimming: "light.turn_on" with "data": {{"brightness_step_pct": 10}} (brighter) or -10 (dimmer).
-  On: "light.turn_on"; off: "light.turn_off". Use "mode": "queued" for buttons pressed quickly.
+  On: "light.turn_on"; off: "light.turn_off".
+- Buttons and remotes must feel instant: "mode": "restart" (a new press takes over at once;
+  "queued" makes quick presses lag), "transition": 0 in the data of brightness steps, and for
+  holding a button a "repeat" loop (count 20: step + 250 ms delay) that the release event ends.
 - Never unlock locks, open garage doors or disarm alarms.
 - If something they ask for is impossible with these devices, say so in "notes" instead of
   guessing.
 
 Answer with ONE JSON object and nothing else:
 {{"items": [{{"title": "<what it does, max 60 chars>", "does": "<plain words: which button does
-what to which lights>", "why": "<1 sentence>", "automation": {{"alias": "...", "mode": "queued",
+what to which lights>", "why": "<1 sentence>", "automation": {{"alias": "...", "mode": "restart",
 "triggers": [...], "conditions": [], "actions": [...]}}}}],
  "notes": "<anything the person must know or do, or an empty string>"}}
 """
@@ -853,12 +862,16 @@ LIGHTS AND OTHER THINGS IT CAN CONTROL (entity_id | name | area | kind). Use ONL
 
 Decide which numbered event each button press in the request means, and what it should do.
 - A plain press is a SHORT press ("remote_button_short_press", "press", "single", ...). Use long
-  press or hold events only if they ask for holding.
+  press / hold events only if they ask for holding.
 - Button words: up/top/on/I usually = "turn_on" or "on"; down/bottom/off/O = "turn_off" or "off";
   left = "left" or "arrow_left"; right = "right" or "arrow_right"; dim up = brighter.
-- "do" is one of: "on", "off", "toggle", "brighter", "dimmer".
+- "do" is one of: "on", "off", "toggle", "brighter", "dimmer" (one step per press),
+  "hold_brighter", "hold_dimmer" (keeps stepping while the button is held), "stop".
+- Holding to dim or brighten: map that button's long-press / hold START event to "hold_brighter"
+  or "hold_dimmer", AND that button's RELEASE event ("long_release", "release", "hold_release",
+  "..._release") to "stop". A hold without its release would never stop.
 - "target": {{"entity_id": [...]}} for specific lights, or {{"area_id": "<area_id>"}} for a room.
-- Every button they mention must appear exactly once. Do not add buttons they did not ask for.
+- Every press they mention must appear exactly once. Do not add buttons they did not ask for.
 
 Answer with ONE JSON object and nothing else:
 {{"title": "<what it does, max 60 chars>",
@@ -869,7 +882,10 @@ Answer with ONE JSON object and nothing else:
 """
 
 BUTTON_ACTIONS = {"on": ("turn_on", None), "off": ("turn_off", None), "toggle": ("toggle", None),
-                  "brighter": ("turn_on", 1), "dimmer": ("turn_on", -1)}
+                  "brighter": ("turn_on", 1), "dimmer": ("turn_on", -1),
+                  "hold_brighter": ("turn_on", 1), "hold_dimmer": ("turn_on", -1), "stop": (None, None)}
+HOLD_REPEATS = 20  # 20 x 10 % covers the whole range
+HOLD_INTERVAL_MS = 250
 
 
 def buttons_to_automation(answer: dict, triggers: list[dict]) -> tuple[dict | None, str | None]:
@@ -895,12 +911,23 @@ def buttons_to_automation(answer: dict, triggers: list[dict]) -> tuple[dict | No
         if what not in BUTTON_ACTIONS:
             return None, f"unknown action {what!r} for button {b.get('button')!r}"
         target = b.get("target")
-        if not isinstance(target, dict) or not (target.get("entity_id") or target.get("area_id")):
+        if what != "stop" and (not isinstance(target, dict) or not (target.get("entity_id") or target.get("area_id"))):
             return None, f"button {b.get('button')!r} has no target"
         tid = re.sub(r"[^a-z0-9_]+", "_", str(b.get("button") or f"event_{n}").lower()).strip("_") or f"event_{n}"
-        if any(t.get("id") == tid for t in trigs):
-            tid = f"{tid}_{n}"
+        if any(t.get("id") == tid for t in trigs):  # same button, another kind of press
+            kind = str(triggers[n - 1].get("type", "")).lower()
+            suffix = ("release" if "release" in kind else "hold" if ("long" in kind or "hold" in kind)
+                      else "double" if "double" in kind else str(n))
+            tid = f"{tid}_{suffix}"
+            if any(t.get("id") == tid for t in trigs):
+                tid = f"{tid}_{n}"
         trigs.append({**{k: v for k, v in triggers[n - 1].items() if k != "metadata"}, "id": tid})
+        if what == "stop":
+            # Any new trigger restarts the automation (mode: restart), which ends a running hold
+            # loop at once; this option just makes the release explicit.
+            options.append({"conditions": [{"condition": "trigger", "id": tid}],
+                            "sequence": [{"stop": "Button released"}]})
+            continue
         service, sign = BUTTON_ACTIONS[what]
         ents = target.get("entity_id")
         ents = ents if isinstance(ents, list) else [ents] if ents else []
@@ -913,9 +940,22 @@ def buttons_to_automation(answer: dict, triggers: list[dict]) -> tuple[dict | No
                 pct = abs(int(b.get("step_pct") or 10)) or 10
             except (TypeError, ValueError):
                 pct = 10
-            step["data"] = {"brightness_step_pct": sign * min(pct, 100)}
-        options.append({"conditions": [{"condition": "trigger", "id": tid}], "sequence": [step]})
-    return {"mode": "queued", "max": 10, "triggers": trigs, "conditions": [],
+            # transition 0: no fade, so every step is felt immediately
+            step["data"] = {"brightness_step_pct": sign * min(pct, 100), "transition": 0}
+        if what.startswith("hold_"):
+            step["data"]["transition"] = HOLD_INTERVAL_MS / 1000  # smooth while held
+            sequence = [{"repeat": {"count": HOLD_REPEATS, "sequence": [
+                step, {"delay": {"milliseconds": HOLD_INTERVAL_MS}}]}}]
+        else:
+            sequence = [step]
+        options.append({"conditions": [{"condition": "trigger", "id": tid}], "sequence": sequence})
+    holds = [b for b in buttons if str(b.get("do", "")).lower().startswith("hold_")]
+    if holds and not any(str(b.get("do", "")).lower() == "stop" for b in buttons):
+        return None, ("a hold action has no 'stop' on a release event, so it would keep going for "
+                      f"{HOLD_REPEATS * HOLD_INTERVAL_MS / 1000:g} s after letting go")
+    # restart: a new press takes over immediately instead of waiting for the previous one to
+    # finish (queued made quick presses lag), and it ends a running hold loop.
+    return {"mode": "restart", "triggers": trigs, "conditions": [],
             "actions": [{"choose": options}]}, None
 
 

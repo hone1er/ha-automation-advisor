@@ -18,7 +18,8 @@ Assistant supports.
 - **Fixes on request.** On any automation: *"it turns the light on during the day"*. The AI reads
   the automation, its last runs (traces) and what your devices did, and proposes a fix.
 - **Sets things up on request.** Example: *"Use my new bedroom 4-way remote: up = on, down = off,
-  left = brighter, right = dimmer."* Pick the device, and the AI maps its real button events.
+  left = brighter, right = dimmer, hold to keep dimming."* Pick the device, and the AI maps its
+  real button events; the advisor writes a fast, well-formed automation from that mapping.
 - **Explains every suggestion clearly.** **What it does** in plain words, **Why**, and
   **Exactly**, which is generated from the YAML itself so it is always accurate. Each card also
   shows the replay numbers.
@@ -196,6 +197,15 @@ Mac; with a cloud provider it goes to that provider.
 - **Only automations made in the UI can be edited or deleted.** These are the ones in
   `automations.yaml`, including everything this integration creates. Automations in YAML packages
   can only be turned off; a fix for one is offered as a new automation.
+- **Button set-ups are tuned for speed.**
+  - `restart` mode: a new press takes over at once.
+  - `transition: 0` on brightness steps: no fade.
+  - Holding a button runs a step loop that the release event stops.
+
+  Some remotes still wait about half a second before reporting a click on a button that also
+  supports holding (it has to tell the two apart). That delay is in the remote, not in Home
+  Assistant. For zero-latency control, bind the remote directly to the light in ZHA or
+  Zigbee2MQTT.
 - **Some changes cannot be replayed.** Button presses and other device events have no history, so
   set-ups of remotes show "not replayed". Try them after accepting.
 - **Small local models are inconsistent.** That is why everything is checked and replayed, why

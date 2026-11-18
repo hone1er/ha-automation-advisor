@@ -589,7 +589,7 @@ class AdvisorManager:
             err = item.get("_error") if isinstance(item, dict) else None
             err = err or check_build(config, catalog)
             if err is None:
-                config = {"alias": title, "mode": config.get("mode", "queued"),
+                config = {"alias": title, "mode": config.get("mode", "restart"),
                           **{k: v for k, v in config.items() if k in (
                               "triggers", "trigger", "conditions", "condition", "actions", "action")}}
                 config["description"] = f"Set up by Automation Advisor (AI) on request: {request.strip()}"
